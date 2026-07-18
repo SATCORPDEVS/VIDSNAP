@@ -88,6 +88,10 @@ verifying the segments' codec matches the source. CI runs it on a bare
 
 ## Usage
 
+For a step-by-step walkthrough aimed at end users — installing, the GUI, every
+CLI flag, the warnings VidSnap shows, and troubleshooting — see the
+[**User Guide**](USER_GUIDE.md). The summary below is the short version.
+
 ### GUI
 
 ```
