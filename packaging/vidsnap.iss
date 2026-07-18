@@ -11,7 +11,7 @@
 
 #define MyAppName "VidSnap"
 #define MyAppPublisher "VidSnap"
-#define MyAppURL "https://github.com/vidsnap/vidsnap"
+#define MyAppURL "https://github.com/SATCORPDEVS/VIDSNAP"
 #define MyAppExeName "vidsnap-gui.exe"
 #define MyAppCliName "vidsnap.exe"
 

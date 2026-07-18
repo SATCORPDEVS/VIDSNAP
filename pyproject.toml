@@ -11,7 +11,7 @@ keywords = ["ffmpeg", "video", "split", "segment", "lossless"]
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/vidsnap/vidsnap"
+Homepage = "https://github.com/SATCORPDEVS/VIDSNAP"
 
 [project.scripts]
 vidsnap = "vidsnap.cli:main"

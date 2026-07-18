@@ -157,5 +157,5 @@ awkward-input edge cases, and ships as a Windows installer with FFmpeg bundled.
   `pytest` on every push (quality gates from the first commit).
 - `LICENSE` (GPL-3.0), `CLAUDE.md`, this changelog.
 
-[Unreleased]: https://github.com/vidsnap/vidsnap/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/vidsnap/vidsnap/releases/tag/v1.0.0
+[Unreleased]: https://github.com/SATCORPDEVS/VIDSNAP/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/SATCORPDEVS/VIDSNAP/releases/tag/v1.0.0

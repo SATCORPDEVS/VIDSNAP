@@ -11,7 +11,7 @@ accounts, **no telemetry**. Nothing you feed it ever leaves your computer.
 ## Install
 
 Download `VidSnapSetup-<version>.exe` from the
-[latest release](https://github.com/vidsnap/vidsnap/releases) and run it.
+[latest release](https://github.com/SATCORPDEVS/VIDSNAP/releases) and run it.
 **Nothing else to install** — FFmpeg ships inside.
 
 The installer works without administrator rights (it falls back to a per-user
