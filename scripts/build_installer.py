@@ -38,13 +38,18 @@ _ONEDIR = _DIST / "VidSnap"
 _INSTALLER_DIR = _DIST / "installer"
 
 # Inno Setup does not put itself on PATH, so check the usual install locations
-# before giving up. The names are upper-case because Python upper-cases every
+# before giving up. The env names are upper-case because Python upper-cases every
 # key in os.environ on Windows — "ProgramFiles" would simply never match.
+#
+# LOCALAPPDATA\Programs is included because that is where `winget install
+# JRSoftware.InnoSetup` puts it: winget prefers the per-user install, so the two
+# Program Files paths alone miss the most likely way it got onto the machine.
 _ISCC_CANDIDATES = (
     Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"))
     / "Inno Setup 6"
     / "ISCC.exe",
     Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Inno Setup 6" / "ISCC.exe",
+    Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
 )
 
 
