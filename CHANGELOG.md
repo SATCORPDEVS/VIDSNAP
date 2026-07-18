@@ -6,6 +6,22 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Phase 2 (probing module)
+- `vidsnap/probe.py`: ffprobe wrapper. Runs `ffprobe -print_format json
+  -show_format -show_streams` (invoked as an argument list, never a shell
+  string) and returns a `MediaInfo` with duration, container, video
+  codec/resolution, and audio/subtitle stream counts.
+- Input validation: raises `InvalidInputError` for missing/unreadable files or
+  ffprobe rejections, and `NoVideoStreamError` when there is no real video
+  stream (cover-art / attached-pic "video" streams are ignored).
+- Duration is read from the container, falling back to the longest stream.
+- `MediaInfo.dropped_subtitle_warning()`: flags subtitle streams that an
+  MP4/MOV container cannot carry (only `mov_text` survives; MKV keeps
+  everything), so no stream is lost silently.
+- `tests/test_probe.py`: unit tests drive `probe()` with canned ffprobe JSON
+  (no ffmpeg required); an integration test probes a synthetic video when a
+  real binary is present.
+
 ### Added — Phase 1 (environment, tooling & skeleton)
 - Project scaffold: `pyproject.toml` as the single source of truth (uv, Ruff
   lint+format, ty, pytest); package skeleton under `vidsnap/`.

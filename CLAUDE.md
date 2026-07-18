@@ -87,5 +87,6 @@ uv run pytest                       # tests
 ## Development phases
 
 See `DEVELOPMENT_PLAN.md`. The phase **order** is the commitment. A usable
-CLI-only tool exists after Phase 4. Current status: **Phase 1 complete**
-(environment, tooling, skeleton, CI, pinned FFmpeg fetcher).
+CLI-only tool exists after Phase 4. Current status: **Phase 2 complete**
+(probing module: `vidsnap/probe.py` + tests). Phase 1 delivered the
+environment, tooling, skeleton, CI, and pinned FFmpeg fetcher.
