@@ -18,10 +18,13 @@ venv/
 /tests/fixtures/*
 !/tests/fixtures/.gitkeep
 
-# Packaging output
+# Packaging output — the build tree and artifacts, never the build inputs.
 /build/
 /dist/
+# PyInstaller writes throwaway specs next to whatever it is told to freeze; ours
+# is a committed, hand-written build input.
 *.spec
+!/packaging/vidsnap.spec
 
 # OS / editor
 .DS_Store

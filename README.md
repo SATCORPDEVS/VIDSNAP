@@ -4,10 +4,24 @@ Split any video into ~2-minute segments, saved as new files **with zero quality
 loss**. VidSnap runs entirely on your machine — no web server, no cloud, no
 accounts, **no telemetry**. Nothing you feed it ever leaves your computer.
 
-> **Status:** usable. Phases 1–6 are complete — the CLI and the GUI both split
-> videos losslessly, exact-cut mode is available, and the awkward-input edge
-> cases are covered. Remaining work (a packaged installer) is tracked in
-> [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
+> **Status:** feature-complete. All seven phases are done — the CLI and the GUI
+> split videos losslessly, exact-cut mode is available, the awkward-input edge
+> cases are covered, and there is a Windows installer.
+
+## Install
+
+Download `VidSnapSetup-<version>.exe` from the
+[latest release](https://github.com/vidsnap/vidsnap/releases) and run it.
+**Nothing else to install** — FFmpeg ships inside.
+
+The installer works without administrator rights (it falls back to a per-user
+install), adds a Start Menu entry for the GUI, and can optionally put the
+`vidsnap` command on your `PATH`.
+
+Windows SmartScreen will likely warn that the app is unrecognised, because the
+build is not code-signed — a signing certificate costs a few hundred dollars a
+year and is deliberately deferred. Choose **More info → Run anyway** if you trust
+the download.
 
 ## How it works
 
@@ -47,6 +61,30 @@ uv run pytest                         # tests
 published SHA-256 checksum before unpacking**, refusing to proceed on any
 mismatch. The version, source, and checksum are recorded in the script and in
 `bin/FFMPEG_BUILD.txt` after a successful fetch.
+
+### Building the installer
+
+```bash
+uv sync --group dev --group packaging
+uv run python scripts/fetch_ffmpeg.py          # bin/ must be populated first
+uv run python scripts/build_installer.py       # --skip-installer to stop after PyInstaller
+```
+
+This produces `dist/VidSnap/` (a runnable one-dir build, ~490 MB — almost all of
+it the bundled FFmpeg) and `dist/installer/VidSnapSetup-<version>.exe`. The
+installer step needs [Inno Setup 6](https://jrsoftware.org/isdl.php); the build
+script finds `ISCC.exe` on `PATH` or in the usual install locations.
+
+PyInstaller is used in **one-dir** mode, never one-file: a one-file build
+re-extracts itself to a temp folder on every launch, which is both what packers
+do (AV heuristics flag it) and a needless 170 MB unpack each time you split a
+video. UPX compression is off for the same reason. If Defender flags even the
+one-dir build, the next thing to try is Nuitka — not one-file.
+
+`scripts/smoke_test.py <install-dir>` checks an *installed* copy end to end:
+`--version`, then generating a video with the bundled FFmpeg, splitting it, and
+verifying the segments' codec matches the source. CI runs it on a bare
+`windows-latest` runner after a silent install, which is the clean-machine test.
 
 ## Usage
 
@@ -102,3 +140,11 @@ FFmpeg (which includes libx264 for exact-cut mode); see
 [`LICENSE`](LICENSE) and [`CLAUDE.md`](CLAUDE.md) for the licensing rationale.
 FFmpeg is a trademark of Fabrice Bellard and is a separate work under its own
 license.
+
+**Source offer.** The GPL requires that anyone given the binary can get the
+corresponding source. For any released installer, that source is this repository
+at the matching `v<version>` tag. The bundled FFmpeg is an unmodified upstream
+build; its exact version, download URL, and verified SHA-256 are pinned in
+[`scripts/fetch_ffmpeg.py`](scripts/fetch_ffmpeg.py) and recorded in
+`_internal/bin/FFMPEG_BUILD.txt` inside the installation, and FFmpeg's own source
+is available from the FFmpeg project.

@@ -72,6 +72,9 @@ build's version, source URL, and verified checksum are pinned in
 - `vidsnap/paths.py` — pre-split advisories (cloud-synced / cross-drive output)
 - `vidsnap/log.py` — local rotating-file logging
 - `scripts/fetch_ffmpeg.py` — pinned, checksum-verified FFmpeg downloader
+- `scripts/build_installer.py` — PyInstaller + Inno Setup build (Phase 7)
+- `scripts/smoke_test.py` — clean-machine check against an *installed* copy
+- `packaging/` — `vidsnap.spec` (one-dir), `vidsnap.iss`, frozen entry points
 - `tests/` — unit + integration (integration tests skip when no ffmpeg present)
 
 ## Common commands
@@ -88,7 +91,8 @@ uv run pytest                       # tests
 ## Development phases
 
 See `DEVELOPMENT_PLAN.md`. The phase **order** is the commitment. A usable
-CLI-only tool exists after Phase 4. Current status: **Phase 6 complete**.
+CLI-only tool exists after Phase 4. Current status: **Phase 7 complete — all
+phases done**.
 
 - Phase 1 — environment, tooling, skeleton, CI, pinned FFmpeg fetcher.
 - Phases 2–3 — `probe.py` and the `splitter.py` engine.
@@ -102,4 +106,10 @@ CLI-only tool exists after Phase 4. Current status: **Phase 6 complete**.
   `paths.py` advisories; edge-case coverage (unicode/space filenames, sparse
   keyframes, multi-track audio, rotation metadata, VFR).
 
-Next: Phase 7 (tests & packaging — PyInstaller one-dir + Inno Setup).
+- Phase 7 — packaging: PyInstaller one-dir (`packaging/vidsnap.spec`) + Inno
+  Setup (`packaging/vidsnap.iss`), driven by `scripts/build_installer.py`;
+  `scripts/smoke_test.py` verifies an installed copy; CI builds, installs, and
+  smoke-tests the installer on tagged releases.
+
+All phases are complete. Beyond this the open items are release chores (bump
+`__version__`, tag `v<version>`) and the deferred code-signing certificate.

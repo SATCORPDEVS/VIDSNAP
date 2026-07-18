@@ -14,10 +14,27 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
-# bin/ lives at the repository / install root, one level above the package.
-_BUNDLED_BIN_DIR = Path(__file__).resolve().parent.parent / "bin"
+
+def _bundled_dir() -> Path:
+    """Where ``bin/`` sits, in a source checkout and in a frozen build alike.
+
+    Running from source, ``bin/`` is at the repository root, one level above the
+    package. In a PyInstaller one-dir build the package lives inside an archive
+    with no on-disk ``__file__``, so the anchor is ``sys._MEIPASS`` — the
+    ``_internal`` folder the spec copies ``bin/`` into — instead.
+    """
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass is not None:
+            return Path(meipass) / "bin"
+        return Path(sys.executable).resolve().parent / "bin"
+    return Path(__file__).resolve().parent.parent / "bin"
+
+
+_BUNDLED_BIN_DIR = _bundled_dir()
 
 _EXE_SUFFIX = ".exe" if os.name == "nt" else ""
 

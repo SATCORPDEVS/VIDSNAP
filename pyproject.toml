@@ -25,6 +25,11 @@ dev = [
     "ty>=0.0.1a1",
     "pytest>=8.3",
 ]
+# Only needed to build the installer (Phase 7); kept out of `dev` so the normal
+# quality gates do not drag in PyInstaller.
+packaging = [
+    "pyinstaller>=6.11",
+]
 
 [build-system]
 requires = ["hatchling"]

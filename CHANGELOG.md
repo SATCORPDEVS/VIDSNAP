@@ -6,6 +6,41 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Phase 7 (tests & packaging)
+- **Windows installer.** `packaging/vidsnap.spec` freezes the app with
+  PyInstaller in **one-dir** mode — producing `vidsnap.exe` (console) and
+  `vidsnap-gui.exe` (windowed) sharing one library tree — and
+  `packaging/vidsnap.iss` wraps that in an Inno Setup installer with a Start Menu
+  entry, an optional desktop icon, and an optional `PATH` entry. One-file mode
+  and UPX are deliberately avoided: both are AV heuristics, and one-file would
+  also re-extract ~170 MB of FFmpeg on every launch. The installer needs no
+  administrator rights (per-user fallback via `PrivilegesRequired=lowest`).
+- `vidsnap/ffmpeg.py` now resolves `bin/` in a frozen build as well as from a
+  source checkout: when `sys.frozen` is set it anchors on `sys._MEIPASS` (the
+  `_internal` folder the spec copies the binaries into), falling back to the
+  folder holding the executable. The FFmpeg binaries are bundled as *data*, not
+  as `binaries`, so PyInstaller does not scan a static exe for library imports.
+- `scripts/build_installer.py`: runs PyInstaller then Inno Setup, taking the
+  version from `vidsnap/__init__.py` so it cannot drift, clearing stale build
+  caches first, and failing early with a readable message when `bin/` is empty or
+  `ISCC.exe` is missing. `--skip-installer` stops after the frozen build.
+- `scripts/smoke_test.py`: the clean-machine check, run against an *installed*
+  copy. Stdlib-only and it never imports `vidsnap`, since importing the source
+  would test the checkout rather than the installation. It runs `--version`,
+  generates a 5-minute video with the bundled FFmpeg, splits it, and asserts
+  three valid segments whose codec matches the source — proving the shipped
+  binary stream-copies rather than re-encodes.
+- **CI release job**, on `v*` tags and gated behind the existing quality job:
+  builds the installer on `windows-latest`, installs it silently on the bare
+  runner, runs the smoke test, and uploads the installer as the artifact plus a
+  draft release whose notes carry the GPL source offer.
+- `tests/test_packaging.py`: covers the frozen-resolution branches (the one code
+  path that otherwise runs for the first time on a user's machine) and pins the
+  packaging inputs — one-dir not one-file, FFmpeg bundled, installer version in
+  step with the package, GPL licence conveyed.
+- README: an Install section, installer-build instructions, a SmartScreen note,
+  and an explicit GPL written source offer.
+
 ### Added — Phase 6 (hardening & edge cases)
 - **Exact-cut mode**, the one opt-in path that re-encodes: `--exact` on the CLI,
   an unticked-by-default checkbox in the GUI. The video is re-encoded

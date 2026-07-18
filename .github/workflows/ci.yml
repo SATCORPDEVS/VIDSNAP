@@ -2,11 +2,18 @@ name: CI
 
 on:
   push:
+    tags:
+      - "v*"
+    branches:
+      - "**"
   pull_request:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   quality:
@@ -40,3 +47,77 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  release:
+    name: Build and smoke-test the installer
+    # Only on a version tag, and only once the quality gates are green: a
+    # release artifact should never be built from a commit that fails CI.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: quality
+    runs-on: windows-latest
+    permissions:
+      contents: write # required to create the GitHub release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --group dev --group packaging
+
+      - name: Fetch bundled FFmpeg
+        run: uv run python scripts/fetch_ffmpeg.py
+
+      - name: Build one-dir app and installer
+        run: uv run python scripts/build_installer.py
+
+      - name: Install it on the bare runner
+        # This *is* the clean-machine test: windows-latest has no Python, no
+        # FFmpeg, and none of this project's dependencies outside the venv the
+        # installed app cannot see. /VERYSILENT keeps the wizard from blocking;
+        # /DIR pins the location the smoke test then checks.
+        run: |
+          $installer = Get-ChildItem dist\installer\VidSnapSetup-*.exe | Select-Object -First 1
+          Write-Host "Installing $($installer.FullName)"
+          $p = Start-Process -FilePath $installer.FullName `
+                             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR=C:\VidSnap' `
+                             -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
+
+      - name: Smoke-test the installed app
+        # Run with the system Python, not `uv run`: the point is to exercise the
+        # installed executable and its bundled FFmpeg, not the checkout.
+        run: python scripts\smoke_test.py C:\VidSnap
+
+      - name: Upload the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VidSnapSetup
+          path: dist/installer/VidSnapSetup-*.exe
+          if-no-files-found: error
+
+      - name: Attach the installer to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/installer/VidSnapSetup-*.exe
+          draft: true
+          # GPL-3.0: shipping the binary obliges us to offer the corresponding
+          # source. The tag itself is that source, and the bundled FFmpeg's
+          # upstream is pinned in scripts/fetch_ffmpeg.py.
+          body: |
+            VidSnap ${{ github.ref_name }}
+
+            Download `VidSnapSetup-*.exe` below and run it. Nothing else to install —
+            FFmpeg is bundled.
+
+            VidSnap is GPL-3.0-or-later and bundles the GPL build of FFmpeg. The
+            corresponding source for this release is this repository at tag
+            `${{ github.ref_name }}`; the exact FFmpeg build, its source URL, and its
+            verified SHA-256 are pinned in `scripts/fetch_ffmpeg.py` and recorded in
+            `_internal/bin/FFMPEG_BUILD.txt` inside the installation.
