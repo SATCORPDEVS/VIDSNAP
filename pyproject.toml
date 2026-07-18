@@ -1,6 +1,6 @@
 [project]
 name = "vidsnap"
-version = "0.1.0"
+version = "1.0.0"
 description = "Split any video into ~2-minute segments locally, with zero quality loss."
 readme = "README.md"
 requires-python = ">=3.12"

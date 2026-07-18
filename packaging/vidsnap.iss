@@ -6,7 +6,7 @@
 ; and is kept in step with the package by tests/test_packaging.py.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "1.0.0"
 #endif
 
 #define MyAppName "VidSnap"

@@ -6,6 +6,12 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-07-18
+
+First release. All seven development phases are complete: VidSnap splits video
+losslessly from both a CLI and a GUI, offers opt-in exact cuts, handles the
+awkward-input edge cases, and ships as a Windows installer with FFmpeg bundled.
+
 ### Added — Phase 7 (tests & packaging)
 - **Windows installer.** `packaging/vidsnap.spec` freezes the app with
   PyInstaller in **one-dir** mode — producing `vidsnap.exe` (console) and
@@ -151,4 +157,5 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `pytest` on every push (quality gates from the first commit).
 - `LICENSE` (GPL-3.0), `CLAUDE.md`, this changelog.
 
-[Unreleased]: https://github.com/vidsnap/vidsnap/commits/main
+[Unreleased]: https://github.com/vidsnap/vidsnap/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/vidsnap/vidsnap/releases/tag/v1.0.0
