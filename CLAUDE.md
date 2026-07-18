@@ -87,7 +87,8 @@ uv run pytest                       # tests
 ## Development phases
 
 See `DEVELOPMENT_PLAN.md`. The phase **order** is the commitment. A usable
-CLI-only tool exists after Phase 4. Current status: **Phase 3 complete** — the
-`splitter.py` engine splits losslessly, reports progress, and verifies its
-output. Phase 2 delivered `probe.py`; Phase 1 delivered the environment,
-tooling, skeleton, CI, and pinned FFmpeg fetcher. Next: Phase 4 (CLI).
+CLI-only tool exists after Phase 4. Current status: **Phase 4 complete** — the
+tool is usable: `vidsnap input.mp4 --minutes 2` probes, splits losslessly, and
+reports the output folder. Phases 2–3 delivered `probe.py` and the `splitter.py`
+engine; Phase 1 delivered the environment, tooling, skeleton, CI, and pinned
+FFmpeg fetcher. Next: Phase 5 (Tkinter GUI).

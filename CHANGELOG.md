@@ -6,6 +6,13 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Phase 4 (CLI)
+- `vidsnap <input> [--minutes 2] [--out DIR]` runs the full pipeline: probe →
+  summary → lossless split → progress bar → output-folder report. `--exact` is
+  parsed but reports that re-encode mode lands in Phase 6.
+- `tests/test_cli.py`: argument/error-path unit tests plus an end-to-end
+  integration split.
+
 ### Added — Phase 3 (splitting engine)
 - `vidsnap/splitter.py`: builds and runs the lossless stream-copy segment
   command (`-c copy -map 0 -f segment -segment_time N -reset_timestamps 1`),
