@@ -84,6 +84,47 @@ def test_defaults_match_the_cli(app: gui.VidSnapApp) -> None:
 
 
 @requires_tk
+def test_exact_cuts_are_off_by_default(app: gui.VidSnapApp) -> None:
+    """Lossless is the product; re-encoding must be a deliberate tick."""
+    assert app.exact_var.get() is False
+
+
+@requires_tk
+def test_exact_checkbox_is_disabled_while_running(app: gui.VidSnapApp) -> None:
+    app._set_running(True)
+    assert "disabled" in app.exact_check.state()
+    app._set_running(False)
+    assert "disabled" not in app.exact_check.state()
+
+
+@requires_tk
+def test_destination_warnings_flag_a_synced_output_folder(
+    app: gui.VidSnapApp, tmp_path: Path
+) -> None:
+    app.output_var.set(str(tmp_path / "OneDrive" / "clips"))
+    warnings = app._destination_warnings(tmp_path / "clip.mp4")
+    assert any("sync" in w for w in warnings)
+
+
+@requires_tk
+def test_destination_warnings_silent_for_a_plain_local_folder(
+    app: gui.VidSnapApp, tmp_path: Path
+) -> None:
+    app.output_var.set(str(tmp_path / "clips"))
+    assert app._destination_warnings(tmp_path / "clip.mp4") == []
+
+
+@requires_tk
+@pytest.mark.parametrize("raw", ["", "abc", "0"])
+def test_segment_seconds_falls_back_to_default_for_unusable_input(
+    app: gui.VidSnapApp, raw: str
+) -> None:
+    """Advisory text is computed while the user is mid-type; it must not raise."""
+    app.minutes_var.set(raw)
+    assert app._segment_seconds_or_default() == gui.splitter.DEFAULT_SEGMENT_SECONDS
+
+
+@requires_tk
 def test_cancel_disabled_until_running(app: gui.VidSnapApp) -> None:
     assert "disabled" in app.cancel_btn.state()
     assert "disabled" not in app.start_btn.state()
@@ -191,6 +232,22 @@ def test_finished_message_from_queue_settles_ui(app: gui.VidSnapApp, tmp_path: P
 
     assert "disabled" not in app.start_btn.state()
     assert "1 file(s)" in app.status_var.get()
+
+
+@requires_tk
+def test_finished_note_is_shown_alongside_the_done_line(
+    app: gui.VidSnapApp, tmp_path: Path
+) -> None:
+    """Keyframe drift reported by the engine has to reach the user."""
+    seg = tmp_path / "clip_part_001.mp4"
+    seg.write_bytes(b"x")
+
+    app._messages.put(gui._Finished((seg,), cancelled=False, note="Segments run up to 2:14"))
+    app._poll_messages()
+
+    status = app.status_var.get()
+    assert "1 file(s)" in status
+    assert "2:14" in status
 
 
 @requires_tk

@@ -1,9 +1,9 @@
 """Command-line entry point.
 
-``vidsnap <input> [--minutes 2] [--out DIR]`` probes the source, prints a short
-summary, splits it losslessly (stream copy) into ~N-minute segments, and shows a
-progress bar. Exact-cut (re-encode) mode is scaffolded via ``--exact`` but lands
-in Phase 6.
+``vidsnap <input> [--minutes 2] [--out DIR] [--exact]`` probes the source, prints
+a short summary, splits it into ~N-minute segments, and shows a progress bar.
+The split is a lossless stream copy unless ``--exact`` is passed, which
+re-encodes for frame-accurate cuts and says so before starting.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from vidsnap import __version__, ffmpeg, probe, splitter
+from vidsnap import __version__, ffmpeg, paths, probe, splitter
 from vidsnap.humanize import format_duration
 from vidsnap.log import setup_logging
 
@@ -39,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--exact",
         action="store_true",
-        help="frame-exact cuts via re-encode (slower, minor quality trade-off; Phase 6)",
+        help="frame-exact cuts via re-encode (much slower, one generation of quality loss)",
     )
     parser.add_argument(
         "--version",
@@ -78,14 +78,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     setup_logging()
 
-    if args.exact:
-        print(
-            "Exact-cut (re-encode) mode is not available yet — it lands in Phase 6.\n"
-            "Re-run without --exact for the lossless stream-copy split.",
-            file=sys.stderr,
-        )
-        return 2
-
     segment_seconds = round(args.minutes * 60)
     if segment_seconds < 1:
         parser.error("--minutes must be greater than 0")
@@ -105,24 +97,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"-> ~{n_segments} segment(s) of {args.minutes:g} min"
     )
 
-    subtitle_warning = info.dropped_subtitle_warning()
-    if subtitle_warning:
-        print(f"Warning: {subtitle_warning}", file=sys.stderr)
+    if info.is_shorter_than(segment_seconds):
+        print(
+            f"Note: this video is shorter than one {args.minutes:g}-minute segment, "
+            "so the result is a single lossless copy of the whole file."
+        )
 
-    output_dir = Path(args.out) if args.out else None
+    if args.exact:
+        print(
+            "Exact-cut mode: re-encoding the video for frame-accurate cuts. This is much "
+            "slower than the default lossless split and costs one generation of quality."
+        )
+
+    output_dir = Path(args.out) if args.out else splitter.default_output_dir(input_path)
+    for warning in (
+        info.dropped_subtitle_warning(),
+        paths.cloud_sync_warning(output_dir),
+        paths.different_drive_warning(input_path, output_dir),
+    ):
+        if warning:
+            print(f"Warning: {warning}", file=sys.stderr)
+
     try:
-        segments = splitter.split(
+        result = splitter.split(
             input_path,
             output_dir,
             segment_seconds,
             on_progress=_make_progress_printer(),
+            exact=args.exact,
         )
     except (splitter.SplitError, probe.ProbeError, ffmpeg.BinaryNotFoundError) as exc:
         print(f"\nError: {exc}", file=sys.stderr)
         return 1
 
-    dest = segments[0].parent if segments else (output_dir or input_path.parent)
-    print(f"\nDone. {len(segments)} file(s) created in {dest}")
+    print(f"\nDone. {len(result)} file(s) created in {result.output_dir or output_dir}")
+    length_report = result.length_report()
+    if length_report:
+        print(length_report)
     return 0
 
 

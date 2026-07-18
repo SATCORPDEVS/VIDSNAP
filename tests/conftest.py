@@ -29,11 +29,40 @@ requires_ffmpeg = pytest.mark.skipif(
 )
 
 
-def make_testsrc(dest: Path, *, seconds: int, fps: int = 30) -> Path:
+def _run_ffmpeg(args: list[str]) -> None:
+    """Run ffmpeg for fixture generation, surfacing stderr if it fails."""
+    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
+    if result.returncode != 0:
+        raise RuntimeError(f"fixture ffmpeg failed:\n{result.stderr}")
+
+
+def make_testsrc(
+    dest: Path,
+    *,
+    seconds: int,
+    fps: int = 30,
+    gop_seconds: int = 1,
+    audio_tracks: int = 1,
+    rotate: int | None = None,
+    vfr: bool = False,
+) -> Path:
     """Generate a synthetic test video at ``dest`` using ffmpeg's testsrc.
 
-    A short GOP (keyframe every second) keeps keyframe-aligned splits predictable
-    for tests. Returns ``dest``.
+    Defaults give a short GOP (keyframe every second), which keeps keyframe-aligned
+    splits predictable. The keyword arguments exist to reproduce the awkward
+    sources Phase 6 hardens against:
+
+    ``gop_seconds``
+        Seconds between keyframes. A large value imitates a screen recording,
+        where a stream copy can only cut every GOP.
+    ``audio_tracks``
+        Number of audio streams, for checking every track survives the split.
+    ``rotate``
+        Degrees of display rotation, as phone videos carry in metadata.
+    ``vfr``
+        Emit variable frame timing rather than a constant rate.
+
+    Returns ``dest``.
     """
     ffmpeg_bin = ffmpeg.find_ffmpeg()
     cmd = [
@@ -43,14 +72,30 @@ def make_testsrc(dest: Path, *, seconds: int, fps: int = 30) -> Path:
         "lavfi",
         "-i",
         f"testsrc=duration={seconds}:size=320x240:rate={fps}",
-        "-f",
-        "lavfi",
-        "-i",
-        f"sine=frequency=440:duration={seconds}",
+    ]
+    for _ in range(audio_tracks):
+        cmd += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}"]
+
+    cmd += ["-map", "0:v"]
+    for index in range(audio_tracks):
+        cmd += ["-map", f"{index + 1}:a"]
+
+    if vfr:
+        # Drop frames in alternating one-second windows, then let the muxer keep
+        # the resulting uneven timestamps instead of padding back to a fixed rate.
+        cmd += ["-vf", "select='lte(mod(t,2),1)'", "-fps_mode", "vfr"]
+
+    cmd += [
         "-c:v",
         "libx264",
         "-g",
-        str(fps),  # keyframe every second
+        str(fps * gop_seconds),
+        "-keyint_min",
+        str(fps * gop_seconds),
+        # Without this x264 inserts extra keyframes at scene changes, which would
+        # undo a deliberately long GOP.
+        "-sc_threshold",
+        "0",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
@@ -58,8 +103,37 @@ def make_testsrc(dest: Path, *, seconds: int, fps: int = 30) -> Path:
         "-shortest",
         str(dest),
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    _run_ffmpeg(cmd)
+
+    if rotate is not None:
+        _apply_rotation(dest, rotate)
     return dest
+
+
+def _apply_rotation(video: Path, degrees: int) -> None:
+    """Stamp display-rotation metadata onto ``video``, in place.
+
+    ``-display_rotation`` is an *input* option, so this remuxes the file through a
+    stream copy — the same lossless path VidSnap uses — rather than re-encoding.
+    """
+    ffmpeg_bin = ffmpeg.find_ffmpeg()
+    rotated = video.with_name(f"{video.stem}_rot{video.suffix}")
+    _run_ffmpeg(
+        [
+            ffmpeg_bin,
+            "-y",
+            "-display_rotation",
+            str(degrees),
+            "-i",
+            str(video),
+            "-map",
+            "0",
+            "-c",
+            "copy",
+            str(rotated),
+        ]
+    )
+    rotated.replace(video)
 
 
 @pytest.fixture

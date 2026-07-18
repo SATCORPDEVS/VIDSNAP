@@ -27,10 +27,14 @@ def test_missing_input_exits_2() -> None:
     assert exc.value.code == 2
 
 
-def test_exact_flag_is_not_yet_supported(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = cli.main(["clip.mp4", "--exact"])
-    assert rc == 2
-    assert "Phase 6" in capsys.readouterr().err
+def test_exact_flag_is_accepted() -> None:
+    args = cli.build_parser().parse_args(["clip.mp4", "--exact"])
+    assert args.exact is True
+
+
+def test_exact_defaults_off() -> None:
+    """The lossless path must be what you get without asking for anything else."""
+    assert cli.build_parser().parse_args(["clip.mp4"]).exact is False
 
 
 def test_zero_minutes_rejected() -> None:
@@ -63,3 +67,31 @@ def test_cli_splits_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str
     seg_dir = tmp_path / "clip_segments"
     segments = sorted(seg_dir.glob("clip_part_*.mp4"))
     assert len(segments) == 3  # 5 min / 2 min -> 3 segments
+
+
+@requires_ffmpeg
+@pytest.mark.integration
+def test_cli_notes_a_video_shorter_than_one_segment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = make_testsrc(tmp_path / "tiny.mp4", seconds=10)
+    rc = cli.main([str(source), "--minutes", "2"])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "shorter than one" in out
+    assert len(sorted((tmp_path / "tiny_segments").glob("tiny_part_*.mp4"))) == 1
+
+
+@requires_ffmpeg
+@pytest.mark.integration
+def test_cli_warns_before_an_exact_reencode(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = make_testsrc(tmp_path / "clip.mp4", seconds=20)
+    rc = cli.main([str(source), "--minutes", "0.25", "--exact"])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "Exact-cut mode" in out
+    assert "quality" in out

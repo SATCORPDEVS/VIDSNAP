@@ -69,6 +69,7 @@ build's version, source URL, and verified checksum are pinned in
 - `vidsnap/cli.py` — argparse entry point (Phase 4)
 - `vidsnap/gui.py` — Tkinter window (Phase 5)
 - `vidsnap/ffmpeg.py` — binary resolver
+- `vidsnap/paths.py` — pre-split advisories (cloud-synced / cross-drive output)
 - `vidsnap/log.py` — local rotating-file logging
 - `scripts/fetch_ffmpeg.py` — pinned, checksum-verified FFmpeg downloader
 - `tests/` — unit + integration (integration tests skip when no ffmpeg present)
@@ -87,10 +88,18 @@ uv run pytest                       # tests
 ## Development phases
 
 See `DEVELOPMENT_PLAN.md`. The phase **order** is the commitment. A usable
-CLI-only tool exists after Phase 4. Current status: **Phase 5 complete** — both
-front ends work: `vidsnap input.mp4 --minutes 2` (CLI) and `vidsnap-gui` (Tkinter
-window with progress and Cancel). Phase 5 also added cancellation to the engine
-(`splitter.split(cancel_event=…)`), which kills FFmpeg and removes the partial
-segment. Phases 2–3 delivered `probe.py` and the `splitter.py` engine; Phase 1
-delivered the environment, tooling, skeleton, CI, and pinned FFmpeg fetcher.
-Next: Phase 6 (hardening & edge cases, plus optional exact-cut mode).
+CLI-only tool exists after Phase 4. Current status: **Phase 6 complete**.
+
+- Phase 1 — environment, tooling, skeleton, CI, pinned FFmpeg fetcher.
+- Phases 2–3 — `probe.py` and the `splitter.py` engine.
+- Phase 4 — CLI (`vidsnap input.mp4 --minutes 2`).
+- Phase 5 — GUI (`vidsnap-gui`), plus cancellation in the engine
+  (`splitter.split(cancel_event=…)`), which kills FFmpeg and removes the partial
+  segment.
+- Phase 6 — exact-cut mode (`split(exact=True)` / `--exact` / GUI checkbox, the
+  only re-encoding path); `split()` returns a `SplitResult` carrying measured
+  segment durations so keyframe drift is reported rather than discovered;
+  `paths.py` advisories; edge-case coverage (unicode/space filenames, sparse
+  keyframes, multi-track audio, rotation metadata, VFR).
+
+Next: Phase 7 (tests & packaging — PyInstaller one-dir + Inno Setup).

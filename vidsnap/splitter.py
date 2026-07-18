@@ -1,14 +1,21 @@
 """Splitting engine — builds and runs the ffmpeg segment command. The core.
 
-The split is **lossless stream copy** (``-c copy``): FFmpeg copies the encoded
-video/audio packets straight into new segment files without re-encoding, so the
-output is bit-identical to the source. The only cost is that cuts snap to the
-nearest keyframe, so a "2:00" segment may run 2:00-2:04.
+By default the split is **lossless stream copy** (``-c copy``): FFmpeg copies the
+encoded video/audio packets straight into new segment files without re-encoding,
+so the output is bit-identical to the source. The only cost is that cuts snap to
+the nearest keyframe, so a "2:00" segment may run 2:00-2:04.
+
+The opt-in **exact-cut mode** (``exact=True``, ``--exact``) re-encodes the video
+so a keyframe lands exactly on every boundary, giving frame-accurate segment
+lengths at the cost of time and a generation of quality. It is never the default
+and every entry point labels it.
 
 FFmpeg is always invoked with an argument list — never ``shell=True``, never a
 concatenated string — so hostile filenames cannot inject commands. Progress is
 read from ``-progress pipe:1`` and reported as a fraction in ``[0.0, 1.0]``;
 after the run each segment is re-probed to prove it is a non-empty, valid video.
+Nothing is ever buffered: FFmpeg streams the file, so a 10 GB source costs no
+more memory than a 10 MB one.
 """
 
 from __future__ import annotations
@@ -16,10 +23,12 @@ from __future__ import annotations
 import contextlib
 import subprocess
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from vidsnap import ffmpeg, probe
+from vidsnap.humanize import format_duration
 from vidsnap.log import get_logger
 
 _logger = get_logger()
@@ -29,6 +38,17 @@ DEFAULT_SEGMENT_SECONDS = 120
 # How far the summed segment durations may drift from the source before we log a
 # warning (keyframe cutting should not change total duration meaningfully).
 _DURATION_TOLERANCE_SECONDS = 2.0
+
+# A segment is only worth calling out as "long" if it overshoots by more than
+# this — below it the difference is rounding, not sparse keyframes.
+_DRIFT_REPORT_THRESHOLD_SECONDS = 1.0
+
+# Exact-cut re-encode settings. CRF 17 is visually transparent for most sources;
+# ``slow`` trades encode time for size. Audio and subtitles are still copied —
+# only the video has to be re-encoded to place keyframes.
+_EXACT_VIDEO_CODEC = "libx264"
+_EXACT_CRF = "17"
+_EXACT_PRESET = "slow"
 
 # Progress is reported in [0.0, 1.0].
 ProgressCallback = Callable[[float], None]
@@ -52,18 +72,107 @@ class SplitCancelled(RuntimeError):
         self.segments = tuple(segments)
 
 
+@dataclass(frozen=True)
+class SplitResult:
+    """The segments a split produced, plus how long each one actually ran.
+
+    Stream copy cuts on keyframes, so the real segment lengths are a property of
+    the *source*, not of the requested length: a screen recording with a 10-second
+    GOP can only be cut every 10 seconds. Carrying the measured durations here
+    lets the CLI and GUI show that drift instead of leaving the user to discover
+    a 2:14 "2-minute" segment in a player.
+
+    Iterating or taking ``len()`` of a result yields its segment paths, so the
+    common ``for seg in result`` / ``len(result)`` reads naturally.
+    """
+
+    segments: tuple[Path, ...]
+    durations: tuple[float, ...]
+    requested_seconds: int
+    exact: bool = False
+
+    def __len__(self) -> int:
+        return len(self.segments)
+
+    def __iter__(self) -> Iterator[Path]:
+        return iter(self.segments)
+
+    @property
+    def output_dir(self) -> Path | None:
+        """Folder the segments were written to, or ``None`` if there are none."""
+        return self.segments[0].parent if self.segments else None
+
+    @property
+    def total_seconds(self) -> float:
+        return sum(self.durations)
+
+    @property
+    def longest_seconds(self) -> float:
+        return max(self.durations, default=0.0)
+
+    def length_report(self) -> str | None:
+        """One line describing how far the real lengths ran over the request.
+
+        Returns ``None`` when every segment landed on the requested length (as it
+        always does in exact-cut mode), so callers can print this unconditionally.
+        """
+        # The final segment is a remainder — always short, never evidence of drift.
+        full_segments = self.durations[:-1]
+        overshoot = max(full_segments, default=0.0) - self.requested_seconds
+        if overshoot <= _DRIFT_REPORT_THRESHOLD_SECONDS:
+            return None
+        return (
+            f"Segments run up to {format_duration(max(full_segments))} rather than "
+            f"{format_duration(self.requested_seconds)}: cuts can only land on the source's "
+            "keyframes, which are up to "
+            f"{format_duration(overshoot)} apart. Use exact-cut mode for exact lengths."
+        )
+
+
 def build_segment_command(
     ffmpeg: str,
     input_path: Path,
     output_pattern: str,
     segment_seconds: int = DEFAULT_SEGMENT_SECONDS,
+    exact: bool = False,
 ) -> list[str]:
-    """Build the lossless stream-copy segment command as an argument list.
+    """Build the segment command as an argument list.
 
     ``output_pattern`` is a printf-style path (e.g. ``clip_part_%03d.mp4``).
     Always returns a list (never a shell string) so hostile filenames cannot
     inject commands.
+
+    With ``exact=False`` (the default) the command is a lossless stream copy.
+    With ``exact=True`` the video is re-encoded with a keyframe forced at every
+    segment boundary, so the cuts are frame-accurate; audio and subtitles are
+    still copied untouched.
     """
+    codec_args = (
+        # ``-c copy`` first, then override only the video: audio and subtitles are
+        # still copied, and just the video stream is re-encoded to place keyframes.
+        [
+            "-c",
+            "copy",
+            "-c:v",
+            _EXACT_VIDEO_CODEC,
+            "-crf",
+            _EXACT_CRF,
+            "-preset",
+            _EXACT_PRESET,
+            # A keyframe exactly on every multiple of segment_seconds is what makes
+            # the segment muxer's cuts frame-accurate.
+            "-force_key_frames",
+            f"expr:gte(t,n_forced*{segment_seconds})",
+        ]
+        if exact
+        else ["-c", "copy"]  # lossless: copy packets, never re-encode
+    )
+    # The segment muxer only cuts on a keyframe at or after the boundary. A forced
+    # keyframe can land a rounding-hair *before* it, in which case the cut would
+    # be skipped and the segment would come out double length. This tolerance
+    # accepts a keyframe that close to the boundary. Stream copy does not want it:
+    # there the cut point is dictated by the source's own keyframes anyway.
+    segment_tolerance_args = ["-segment_time_delta", "0.05"] if exact else []
     return [
         ffmpeg,
         "-hide_banner",
@@ -75,12 +184,12 @@ def build_segment_command(
         str(input_path),
         "-map",
         "0",  # keep every stream the container allows
-        "-c",
-        "copy",  # lossless: copy packets, never re-encode
+        *codec_args,
         "-f",
         "segment",
         "-segment_time",
         str(segment_seconds),
+        *segment_tolerance_args,
         "-segment_start_number",
         "1",  # first file is _part_001, not _part_000
         "-reset_timestamps",
@@ -103,13 +212,21 @@ def split(
     segment_seconds: int = DEFAULT_SEGMENT_SECONDS,
     on_progress: ProgressCallback | None = None,
     cancel_event: threading.Event | None = None,
-) -> Sequence[Path]:
-    """Split ``input_path`` into ~``segment_seconds`` segments; return their paths.
+    exact: bool = False,
+) -> SplitResult:
+    """Split ``input_path`` into ~``segment_seconds`` segments.
 
     The source is probed first (validating it and giving the total duration used
     for progress). Segments are written to ``output_dir`` (default
     ``<input name>_segments`` next to the input) using the source's own
-    container, then verified.
+    container, then verified. The returned :class:`SplitResult` carries the
+    segment paths and their measured durations.
+
+    ``exact=True`` opts into frame-accurate cuts by re-encoding the video — far
+    slower, and one generation of quality. The default stream copy is lossless.
+
+    A source shorter than one segment is not a special case: FFmpeg writes a
+    single segment, which is a lossless copy of the whole file.
 
     Setting ``cancel_event`` from another thread stops the run: FFmpeg is
     terminated, the partial segment it was mid-write is deleted, and
@@ -138,8 +255,14 @@ def split(
     pattern = str(output_dir / f"{prefix}%03d{ext}")
 
     ffmpeg_bin = ffmpeg.find_ffmpeg()
-    cmd = build_segment_command(ffmpeg_bin, input_path, pattern, segment_seconds)
-    _logger.info("splitting %s -> %s (segment_seconds=%d)", input_path, output_dir, segment_seconds)
+    cmd = build_segment_command(ffmpeg_bin, input_path, pattern, segment_seconds, exact=exact)
+    _logger.info(
+        "splitting %s -> %s (segment_seconds=%d, exact=%s)",
+        input_path,
+        output_dir,
+        segment_seconds,
+        exact,
+    )
     _logger.info("command: %s", " ".join(cmd))
 
     returncode, stderr, cancelled = _run_with_progress(
@@ -156,9 +279,18 @@ def split(
         raise SplitError(f"FFmpeg failed to split {input_path.name}: {stderr or 'unknown error'}")
 
     segments = _collect_segments(output_dir, prefix, ext)
-    _verify_segments(segments, info.duration_seconds)
+    durations = _verify_segments(segments, info.duration_seconds)
+    result = SplitResult(
+        segments=tuple(segments),
+        durations=durations,
+        requested_seconds=segment_seconds,
+        exact=exact,
+    )
     _logger.info("split complete: %d segment(s) in %s", len(segments), output_dir)
-    return segments
+    report = result.length_report()
+    if report:
+        _logger.info("%s", report)
+    return result
 
 
 def _collect_segments(output_dir: Path, prefix: str, ext: str) -> list[Path]:
@@ -264,18 +396,24 @@ def _handle_progress_line(
         on_progress(max(0.0, min(elapsed / total_seconds, 1.0)))
 
 
-def _verify_segments(segments: Sequence[Path], source_duration: float) -> None:
-    """Post-run checks: non-empty files, and durations that sum back to the source."""
+def _verify_segments(segments: Sequence[Path], source_duration: float) -> tuple[float, ...]:
+    """Post-run checks; returns each segment's measured duration.
+
+    Checks that every segment is non-empty and that the durations sum back to the
+    source. The per-segment durations are returned rather than discarded so the
+    caller can report actual segment lengths without re-probing.
+    """
     if not segments:
         raise SplitError("FFmpeg produced no output segments.")
 
-    total = 0.0
+    durations: list[float] = []
     for seg in segments:
         if seg.stat().st_size == 0:
             raise SplitError(f"Output segment {seg.name} is empty.")
         # Re-probing each segment also proves it is a valid, playable video.
-        total += probe.probe(seg).duration_seconds
+        durations.append(probe.probe(seg).duration_seconds)
 
+    total = sum(durations)
     drift = abs(total - source_duration)
     if drift > _DURATION_TOLERANCE_SECONDS:
         _logger.warning(
@@ -285,3 +423,4 @@ def _verify_segments(segments: Sequence[Path], source_duration: float) -> None:
             drift,
             _DURATION_TOLERANCE_SECONDS,
         )
+    return tuple(durations)

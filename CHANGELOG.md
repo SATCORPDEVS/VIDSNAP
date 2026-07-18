@@ -6,6 +6,36 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Phase 6 (hardening & edge cases)
+- **Exact-cut mode**, the one opt-in path that re-encodes: `--exact` on the CLI,
+  an unticked-by-default checkbox in the GUI. The video is re-encoded
+  (`libx264 -crf 17 -preset slow`) with a keyframe forced on every boundary, so
+  cuts are frame-accurate; audio and subtitles are still copied untouched. Both
+  front ends state the cost — much slower, one generation of quality — before
+  starting. `-segment_time_delta 0.05` accompanies it: without that tolerance a
+  forced keyframe landing a rounding-hair before the boundary makes the segment
+  muxer skip the cut, doubling the first segment's length.
+- `splitter.split()` now returns a `SplitResult` (segment paths **plus each
+  segment's measured duration**, already gathered during verification) instead of
+  a bare path list. It behaves like a sequence — `len()` and iteration yield the
+  segments — so callers read the same as before.
+- `SplitResult.length_report()`: when stream copy has to overshoot because the
+  source's keyframes are far apart, the CLI, GUI, and log say by how much rather
+  than leaving the user to find a 2:14 "2-minute" segment in a player. The short
+  final remainder is excluded — that is arithmetic, not drift.
+- `vidsnap/paths.py`: pre-split advisories. Warns when the output folder is inside
+  a cloud-synced tree (OneDrive/Dropbox/Google Drive/iCloud — the segments are
+  about the size of the source, so syncing them is a real cost) or on a different
+  drive from the source.
+- A source shorter than one segment now says so explicitly in both front ends:
+  the result is a single lossless copy of the whole file.
+- `tests/test_paths.py`, plus splitter integration coverage for the sources that
+  actually break things: spaces/unicode/bracket filenames, sparse-keyframe
+  sources (drift reported losslessly, exact in `--exact`), multiple audio tracks,
+  rotation metadata surviving a stream copy, and variable frame rate.
+  `make_testsrc` grew `gop_seconds`, `audio_tracks`, `rotate`, and `vfr` to
+  generate them.
+
 ### Added — Phase 5 (GUI)
 - `vidsnap/gui.py`: Tkinter window with a video picker, segment-length spinner
   (minutes, default 2), output-folder picker, progress bar, status line, and an

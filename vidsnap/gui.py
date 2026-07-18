@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from vidsnap import __version__, ffmpeg, probe, splitter
+from vidsnap import __version__, ffmpeg, paths, probe, splitter
 from vidsnap.humanize import format_duration
 from vidsnap.log import get_logger, setup_logging
 
@@ -54,10 +54,15 @@ class _Progress:
 
 @dataclass(frozen=True)
 class _Finished:
-    """The split ended — either completed or cancelled — with these segments."""
+    """The split ended — either completed or cancelled — with these segments.
+
+    ``note`` carries anything worth telling the user about the finished run, such
+    as segments that ran long because the source's keyframes are far apart.
+    """
 
     segments: tuple[Path, ...]
     cancelled: bool
+    note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -140,6 +145,7 @@ class VidSnapApp:
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
         self.minutes_var = tk.StringVar(value=f"{splitter.DEFAULT_SEGMENT_SECONDS / 60:g}")
+        self.exact_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Choose a video to get started.")
 
         self._build_widgets()
@@ -168,6 +174,14 @@ class VidSnapApp:
         )
         self.minutes_spin.grid(row=0, column=0)
         ttk.Label(spin_row, text="minutes").grid(row=0, column=1, padx=(6, 0))
+        # Off by default and labelled with its cost: the lossless split is the
+        # point of VidSnap, and this is the one control that gives it up.
+        self.exact_check = ttk.Checkbutton(
+            spin_row,
+            text="Exact cuts (re-encodes — slower, slight quality loss)",
+            variable=self.exact_var,
+        )
+        self.exact_check.grid(row=0, column=2, padx=(18, 0))
 
         ttk.Label(frame, text="Output folder").grid(row=2, column=0, sticky="w", pady=4)
         ttk.Entry(frame, textvariable=self.output_var).grid(row=2, column=1, sticky="ew", padx=8)
@@ -212,16 +226,50 @@ class VidSnapApp:
             self.output_var.set(str(Path(chosen)))
 
     def _describe_source(self, path: Path) -> None:
-        """Probe the chosen file and show a one-line summary (or the error)."""
+        """Probe the chosen file and show a summary plus any advisories."""
         try:
             info = probe.probe(path)
         except (probe.ProbeError, ffmpeg.BinaryNotFoundError) as exc:
             self.status_var.set(str(exc))
             return
-        self.status_var.set(
+
+        lines = [
             f"{path.name} — {format_duration(info.duration_seconds)}, "
             f"{info.resolution} {info.video_codec}"
-        )
+        ]
+        segment_seconds = self._segment_seconds_or_default()
+        if info.is_shorter_than(segment_seconds):
+            lines.append("Shorter than one segment — the result will be a single lossless copy.")
+        lines.extend(w for w in self._destination_warnings(path) if w)
+        subtitle_warning = info.dropped_subtitle_warning()
+        if subtitle_warning:
+            lines.append(subtitle_warning)
+        self.status_var.set("\n".join(lines))
+
+    def _destination_warnings(self, input_path: Path) -> list[str]:
+        """Advisories about where the segments will land (sync folder, other drive)."""
+        raw_out = self.output_var.get().strip()
+        output_dir = Path(raw_out) if raw_out else splitter.default_output_dir(input_path)
+        return [
+            w
+            for w in (
+                paths.cloud_sync_warning(output_dir),
+                paths.different_drive_warning(input_path, output_dir),
+            )
+            if w
+        ]
+
+    def _segment_seconds_or_default(self) -> int:
+        """The spinbox value in seconds, falling back to the default if unparseable.
+
+        Used only for advisory text, where a half-typed number should not raise or
+        pop a dialog — validation proper happens in :meth:`_read_minutes`.
+        """
+        try:
+            minutes = float(self.minutes_var.get().strip())
+        except ValueError:
+            return splitter.DEFAULT_SEGMENT_SECONDS
+        return max(1, round(minutes * 60)) if minutes > 0 else splitter.DEFAULT_SEGMENT_SECONDS
 
     # ------------------------------------------------------------------ #
     # Running the split
@@ -261,15 +309,21 @@ class VidSnapApp:
         raw_out = self.output_var.get().strip()
         output_dir = Path(raw_out) if raw_out else None
 
+        exact = bool(self.exact_var.get())
+
         self._cancel_event = threading.Event()
         self._set_running(True)
         self.progress["value"] = 0.0
-        self.status_var.set("Splitting…")
+        self.status_var.set(
+            "Re-encoding for exact cuts — this takes much longer than a lossless split…"
+            if exact
+            else "Splitting…"
+        )
         self._result_dir = None
 
         self._worker = threading.Thread(
             target=self._run_split,
-            args=(input_path, output_dir, segment_seconds, self._cancel_event),
+            args=(input_path, output_dir, segment_seconds, self._cancel_event, exact),
             daemon=True,
         )
         self._worker.start()
@@ -280,15 +334,17 @@ class VidSnapApp:
         output_dir: Path | None,
         segment_seconds: int,
         cancel_event: threading.Event,
+        exact: bool,
     ) -> None:
         """Worker thread. Touches no widgets — only posts to the queue."""
         try:
-            segments = splitter.split(
+            result = splitter.split(
                 input_path,
                 output_dir,
                 segment_seconds,
                 on_progress=lambda f: self._messages.put(_Progress(f)),
                 cancel_event=cancel_event,
+                exact=exact,
             )
         except splitter.SplitCancelled as exc:
             self._messages.put(_Finished(tuple(exc.segments), cancelled=True))
@@ -301,7 +357,9 @@ class VidSnapApp:
             _logger.exception("split failed")
             self._messages.put(_Failed(str(exc)))
         else:
-            self._messages.put(_Finished(tuple(segments), cancelled=False))
+            self._messages.put(
+                _Finished(tuple(result.segments), cancelled=False, note=result.length_report())
+            )
 
     def _cancel(self) -> None:
         if self._cancel_event is not None:
@@ -323,7 +381,9 @@ class VidSnapApp:
                     # Coalesce: only the newest value matters for a progress bar.
                     latest_progress = message.fraction
                 elif isinstance(message, _Finished):
-                    self._on_finished(message.segments, cancelled=message.cancelled)
+                    self._on_finished(
+                        message.segments, cancelled=message.cancelled, note=message.note
+                    )
                 else:
                     self._on_error(message.message)
         except queue.Empty:
@@ -334,7 +394,9 @@ class VidSnapApp:
 
         self.root.after(_POLL_INTERVAL_MS, self._poll_messages)
 
-    def _on_finished(self, segments: Sequence[Path], *, cancelled: bool) -> None:
+    def _on_finished(
+        self, segments: Sequence[Path], *, cancelled: bool, note: str | None = None
+    ) -> None:
         """Settle the UI after the worker ends, however it ended."""
         self._set_running(False)
         # A cancelled run is not "complete", so the bar goes back to empty.
@@ -352,7 +414,8 @@ class VidSnapApp:
                 else "Cancelled — no complete segments were kept."
             )
         elif segments:
-            self.status_var.set(f"Done — {len(segments)} file(s) created in {self._result_dir}")
+            done = f"Done — {len(segments)} file(s) created in {self._result_dir}"
+            self.status_var.set(f"{done}\n{note}" if note else done)
         else:
             self.status_var.set("Done, but no segments were produced.")
 
@@ -371,6 +434,7 @@ class VidSnapApp:
             self.browse_input_btn,
             self.browse_output_btn,
             self.minutes_spin,
+            self.exact_check,
         ):
             widget.state(busy)
         self.cancel_btn.state(idle)
