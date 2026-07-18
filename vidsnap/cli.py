@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from vidsnap import __version__, ffmpeg, probe, splitter
+from vidsnap.humanize import format_duration
 from vidsnap.log import setup_logging
 
 
@@ -49,15 +50,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 DEFAULT_MINUTES = splitter.DEFAULT_SEGMENT_SECONDS / 60
-
-
-def _format_duration(seconds: float) -> str:
-    total = round(seconds)
-    hours, rem = divmod(total, 3600)
-    minutes, secs = divmod(rem, 60)
-    if hours:
-        return f"{hours}:{minutes:02d}:{secs:02d}"
-    return f"{minutes}:{secs:02d}"
 
 
 def _make_progress_printer() -> splitter.ProgressCallback:
@@ -108,7 +100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     n_segments = math.ceil(info.duration_seconds / segment_seconds)
     print(
-        f"{input_path.name}: {_format_duration(info.duration_seconds)}, "
+        f"{input_path.name}: {format_duration(info.duration_seconds)}, "
         f"{info.resolution} {info.video_codec} "
         f"-> ~{n_segments} segment(s) of {args.minutes:g} min"
     )

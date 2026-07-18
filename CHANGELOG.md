@@ -6,6 +6,27 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Phase 5 (GUI)
+- `vidsnap/gui.py`: Tkinter window with a video picker, segment-length spinner
+  (minutes, default 2), output-folder picker, progress bar, status line, and an
+  "Open folder" button on completion. Launch with `vidsnap-gui`.
+- Windows DPI awareness is enabled *before* the Tk root is created, and Tk's
+  font scaling is set from the real display DPI, so the UI is neither blurry nor
+  undersized on high-DPI screens.
+- The split runs on a worker thread so the window stays responsive. That thread
+  never touches a widget: it posts typed messages to a `queue.Queue` which the UI
+  thread drains from an `after()` timer.
+- **Cancel** support, new in the engine: `splitter.split()` takes a
+  `cancel_event`; setting it terminates FFmpeg, deletes the partial segment it
+  was mid-write (an unfinalised container is unplayable), keeps the completed
+  ones, and raises `SplitCancelled`. Closing the window mid-split cancels too,
+  rather than orphaning the FFmpeg process.
+- `vidsnap/humanize.py`: `format_duration` extracted so the CLI and GUI share one
+  implementation.
+- `tests/test_gui.py` and `tests/test_humanize.py`; cancellation tests added to
+  `tests/test_splitter.py`. GUI tests share a single session Tk root and give
+  each test its own `Toplevel`, and skip cleanly where no usable Tk is present.
+
 ### Added — Phase 4 (CLI)
 - `vidsnap <input> [--minutes 2] [--out DIR]` runs the full pipeline: probe →
   summary → lossless split → progress bar → output-folder report. `--exact` is

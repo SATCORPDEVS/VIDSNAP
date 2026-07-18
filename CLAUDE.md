@@ -87,8 +87,10 @@ uv run pytest                       # tests
 ## Development phases
 
 See `DEVELOPMENT_PLAN.md`. The phase **order** is the commitment. A usable
-CLI-only tool exists after Phase 4. Current status: **Phase 4 complete** — the
-tool is usable: `vidsnap input.mp4 --minutes 2` probes, splits losslessly, and
-reports the output folder. Phases 2–3 delivered `probe.py` and the `splitter.py`
-engine; Phase 1 delivered the environment, tooling, skeleton, CI, and pinned
-FFmpeg fetcher. Next: Phase 5 (Tkinter GUI).
+CLI-only tool exists after Phase 4. Current status: **Phase 5 complete** — both
+front ends work: `vidsnap input.mp4 --minutes 2` (CLI) and `vidsnap-gui` (Tkinter
+window with progress and Cancel). Phase 5 also added cancellation to the engine
+(`splitter.split(cancel_event=…)`), which kills FFmpeg and removes the partial
+segment. Phases 2–3 delivered `probe.py` and the `splitter.py` engine; Phase 1
+delivered the environment, tooling, skeleton, CI, and pinned FFmpeg fetcher.
+Next: Phase 6 (hardening & edge cases, plus optional exact-cut mode).

@@ -13,6 +13,7 @@ after the run each segment is re-probed to prove it is a non-empty, valid video.
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import threading
 from collections.abc import Callable, Sequence
@@ -35,6 +36,20 @@ ProgressCallback = Callable[[float], None]
 
 class SplitError(RuntimeError):
     """Raised when FFmpeg fails or the produced segments do not verify."""
+
+
+class SplitCancelled(RuntimeError):
+    """Raised when the caller cancelled the split via its ``cancel_event``.
+
+    Not a :class:`SplitError`: cancellation is a deliberate user action, not a
+    failure, and callers generally want to report it differently. ``segments``
+    holds the completed segments that were kept; the partial one FFmpeg was
+    still writing is deleted before this is raised.
+    """
+
+    def __init__(self, segments: Sequence[Path]) -> None:
+        super().__init__("Split cancelled.")
+        self.segments = tuple(segments)
 
 
 def build_segment_command(
@@ -87,6 +102,7 @@ def split(
     output_dir: Path | None = None,
     segment_seconds: int = DEFAULT_SEGMENT_SECONDS,
     on_progress: ProgressCallback | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> Sequence[Path]:
     """Split ``input_path`` into ~``segment_seconds`` segments; return their paths.
 
@@ -95,10 +111,15 @@ def split(
     ``<input name>_segments`` next to the input) using the source's own
     container, then verified.
 
+    Setting ``cancel_event`` from another thread stops the run: FFmpeg is
+    terminated, the partial segment it was mid-write is deleted, and
+    :class:`SplitCancelled` is raised carrying the completed segments.
+
     Raises:
         probe.ProbeError: the input is missing/unreadable or not a video.
         ffmpeg.BinaryNotFoundError: ffmpeg/ffprobe could not be located.
         SplitError: FFmpeg failed or the output segments did not verify.
+        SplitCancelled: ``cancel_event`` was set while the split was running.
     """
     input_path = Path(input_path)
     info = probe.probe(input_path)
@@ -121,30 +142,63 @@ def split(
     _logger.info("splitting %s -> %s (segment_seconds=%d)", input_path, output_dir, segment_seconds)
     _logger.info("command: %s", " ".join(cmd))
 
-    returncode, stderr = _run_with_progress(cmd, info.duration_seconds, on_progress)
+    returncode, stderr, cancelled = _run_with_progress(
+        cmd, info.duration_seconds, on_progress, cancel_event
+    )
+
+    if cancelled:
+        kept = _discard_partial_segment(_collect_segments(output_dir, prefix, ext))
+        _logger.info("split cancelled: kept %d complete segment(s) in %s", len(kept), output_dir)
+        raise SplitCancelled(kept)
+
     if returncode != 0:
         _logger.error("ffmpeg exited %d: %s", returncode, stderr)
         raise SplitError(f"FFmpeg failed to split {input_path.name}: {stderr or 'unknown error'}")
 
-    segments = sorted(
+    segments = _collect_segments(output_dir, prefix, ext)
+    _verify_segments(segments, info.duration_seconds)
+    _logger.info("split complete: %d segment(s) in %s", len(segments), output_dir)
+    return segments
+
+
+def _collect_segments(output_dir: Path, prefix: str, ext: str) -> list[Path]:
+    """Segment files this run wrote, in numeric (filename) order."""
+    return sorted(
         p
         for p in output_dir.iterdir()
         if p.is_file() and p.name.startswith(prefix) and p.suffix.lower() == ext
     )
-    _verify_segments(segments, info.duration_seconds)
-    _logger.info("split complete: %d segment(s) in %s", len(segments), output_dir)
-    return segments
+
+
+def _discard_partial_segment(segments: list[Path]) -> list[Path]:
+    """Delete the last segment — the one FFmpeg was still writing when killed.
+
+    Terminating FFmpeg mid-write leaves that file without a finalised container
+    header (no moov atom for MP4), so it is unplayable. The earlier segments were
+    already closed and remain valid, so only the tail is removed.
+    """
+    if not segments:
+        return []
+    partial = segments[-1]
+    _logger.info("removing partial segment %s", partial.name)
+    partial.unlink(missing_ok=True)
+    return segments[:-1]
 
 
 def _run_with_progress(
     cmd: list[str],
     total_seconds: float,
     on_progress: ProgressCallback | None,
-) -> tuple[int, str]:
-    """Run ``cmd``, parsing ``-progress`` output on stdout; return (rc, stderr).
+    cancel_event: threading.Event | None = None,
+) -> tuple[int, str, bool]:
+    """Run ``cmd``, parsing ``-progress`` output; return (rc, stderr, cancelled).
 
     stderr is drained on a background thread so a chatty FFmpeg cannot deadlock
     by filling the pipe while we block reading stdout.
+
+    ``cancel_event`` is checked once per progress line. FFmpeg emits those every
+    few hundred milliseconds, so cancellation is responsive without needing a
+    separate watchdog thread or a non-blocking read.
     """
     proc = subprocess.Popen(
         cmd,
@@ -167,13 +221,30 @@ def _run_with_progress(
     drainer = threading.Thread(target=_drain_stderr, daemon=True)
     drainer.start()
 
+    cancelled = False
     if proc.stdout is not None:
         for raw in proc.stdout:
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                _terminate(proc)
+                break
             _handle_progress_line(raw.strip(), total_seconds, on_progress)
 
     proc.wait()
     drainer.join(timeout=2)
-    return proc.returncode, "".join(stderr_chunks).strip()
+    return proc.returncode, "".join(stderr_chunks).strip(), cancelled
+
+
+def _terminate(proc: subprocess.Popen[str]) -> None:
+    """Stop FFmpeg, escalating to a hard kill if it does not exit promptly."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _logger.warning("ffmpeg did not exit after terminate(); killing it")
+        proc.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
 
 
 def _handle_progress_line(

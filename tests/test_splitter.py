@@ -9,6 +9,7 @@ is available.
 from __future__ import annotations
 
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -176,4 +177,56 @@ def test_split_custom_output_dir(tmp_path: Path) -> None:
     out = tmp_path / "chunks"
     segments = splitter.split(source, output_dir=out, segment_seconds=15)
     assert all(s.parent == out for s in segments)
+    assert len(segments) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Cancellation
+# --------------------------------------------------------------------------- #
+
+
+def test_discard_partial_segment_removes_only_the_tail(tmp_path: Path) -> None:
+    files = []
+    for n in (1, 2, 3):
+        f = tmp_path / f"clip_part_{n:03d}.mp4"
+        f.write_bytes(b"data")
+        files.append(f)
+
+    kept = splitter._discard_partial_segment(files)
+
+    assert kept == files[:2]
+    assert all(f.exists() for f in files[:2])
+    assert not files[2].exists()  # the partial tail is gone
+
+
+def test_discard_partial_segment_handles_empty_list() -> None:
+    assert splitter._discard_partial_segment([]) == []
+
+
+@requires_ffmpeg
+@pytest.mark.integration
+def test_cancelled_split_raises_and_removes_partial(tmp_path: Path) -> None:
+    source = make_testsrc(tmp_path / "clip.mp4", seconds=7 * 60)
+    out = tmp_path / "chunks"
+    # Pre-setting the event makes this deterministic: the very first progress
+    # line FFmpeg emits trips the cancel check, before any real work finishes.
+    cancel = threading.Event()
+    cancel.set()
+
+    with pytest.raises(splitter.SplitCancelled) as excinfo:
+        splitter.split(source, output_dir=out, segment_seconds=30, cancel_event=cancel)
+
+    # Whatever survived is complete and non-empty; the partial tail was deleted.
+    kept = excinfo.value.segments
+    on_disk = sorted(out.glob("clip_part_*.mp4"))
+    assert list(kept) == on_disk
+    assert all(s.stat().st_size > 0 for s in kept)
+
+
+@requires_ffmpeg
+@pytest.mark.integration
+def test_uncancelled_event_does_not_affect_split(tmp_path: Path) -> None:
+    source = make_testsrc(tmp_path / "clip.mp4", seconds=60)
+    # An event that is never set must behave exactly like passing None.
+    segments = splitter.split(source, segment_seconds=30, cancel_event=threading.Event())
     assert len(segments) == 2

@@ -4,9 +4,9 @@ Split any video into ~2-minute segments, saved as new files **with zero quality
 loss**. VidSnap runs entirely on your machine — no web server, no cloud, no
 accounts, **no telemetry**. Nothing you feed it ever leaves your computer.
 
-> **Status:** early development. Phase 1 (environment, tooling & skeleton) is
-> complete; the CLI/GUI split pipeline is being built out per
-> [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
+> **Status:** usable. Phases 1–5 are complete — both the CLI and the GUI split
+> videos losslessly. Remaining work (hardening, exact-cut mode, and a packaged
+> installer) is tracked in [`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md).
 
 ## How it works
 
@@ -42,11 +42,28 @@ published SHA-256 checksum before unpacking**, refusing to proceed on any
 mismatch. The version, source, and checksum are recorded in the script and in
 `bin/FFMPEG_BUILD.txt` after a successful fetch.
 
-## Usage (target CLI)
+## Usage
+
+### GUI
+
+```
+vidsnap-gui
+```
+
+Choose a video, set the segment length in minutes, optionally pick an output
+folder, and press **Split**. Progress is shown as it runs and the window stays
+responsive; **Cancel** stops FFmpeg, keeps the segments already finished, and
+deletes the partial one it was still writing.
+
+### CLI
 
 ```
 vidsnap <input> [--minutes 2] [--out DIR] [--exact]
 ```
+
+Segments are written to `<input name>_segments/` next to the input unless
+`--out` says otherwise. `--exact` is reserved for the future re-encode mode and
+currently exits with a message.
 
 ## FAQ
 
