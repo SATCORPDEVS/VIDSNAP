@@ -6,6 +6,25 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Phase 3 (splitting engine)
+- `vidsnap/splitter.py`: builds and runs the lossless stream-copy segment
+  command (`-c copy -map 0 -f segment -segment_time N -reset_timestamps 1`),
+  always as an argument list — never a shell string.
+- Streams FFmpeg's `-progress pipe:1` output to emit progress callbacks in
+  `[0.0, 1.0]`; stderr is drained on a background thread so a chatty FFmpeg
+  cannot deadlock the pipe.
+- Segments are written to `<input name>_segments/` (overridable) using the
+  source's own container, named `<name>_part_001.<ext>` upward.
+- Post-run verification: each segment is re-probed (non-empty, valid video) and
+  the summed durations are checked against the source (±2 s, logged on drift).
+- Fixed `scripts/fetch_ffmpeg.py`: the gyan `.7z` uses the BCJ2 filter, which
+  `py7zr` cannot decode. Extraction now shells out to libarchive's `bsdtar`
+  (bundled with Windows 10 1803+/11), and the `py7zr` dependency / `setup`
+  dependency-group are dropped.
+- `tests/test_splitter.py`: command-construction and progress-parsing unit
+  tests; integration tests assert segment count, non-empty files, duration sums,
+  and **codec equality proving no re-encode occurred**.
+
 ### Added — Phase 2 (probing module)
 - `vidsnap/probe.py`: ffprobe wrapper. Runs `ffprobe -print_format json
   -show_format -show_streams` (invoked as an argument list, never a shell

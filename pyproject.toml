@@ -25,10 +25,6 @@ dev = [
     "ty>=0.0.1a1",
     "pytest>=8.3",
 ]
-# Used only by scripts/fetch_ffmpeg.py to unpack the pinned .7z build.
-setup = [
-    "py7zr>=0.21",
-]
 
 [build-system]
 requires = ["hatchling"]

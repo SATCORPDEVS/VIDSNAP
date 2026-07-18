@@ -76,7 +76,7 @@ build's version, source URL, and verified checksum are pinned in
 ## Common commands
 
 ```
-uv sync --group dev --group setup   # set up the environment
+uv sync --group dev                 # set up the environment
 uv run python scripts/fetch_ffmpeg.py   # download the pinned FFmpeg into bin/
 uv run ruff check .                 # lint
 uv run ruff format .                # format
@@ -87,6 +87,7 @@ uv run pytest                       # tests
 ## Development phases
 
 See `DEVELOPMENT_PLAN.md`. The phase **order** is the commitment. A usable
-CLI-only tool exists after Phase 4. Current status: **Phase 2 complete**
-(probing module: `vidsnap/probe.py` + tests). Phase 1 delivered the
-environment, tooling, skeleton, CI, and pinned FFmpeg fetcher.
+CLI-only tool exists after Phase 4. Current status: **Phase 3 complete** — the
+`splitter.py` engine splits losslessly, reports progress, and verifies its
+output. Phase 2 delivered `probe.py`; Phase 1 delivered the environment,
+tooling, skeleton, CI, and pinned FFmpeg fetcher. Next: Phase 4 (CLI).

@@ -24,7 +24,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Sync dependencies
-        run: uv sync --group dev --group setup
+        run: uv sync --group dev
 
       - name: Ruff lint
         run: uv run ruff check .

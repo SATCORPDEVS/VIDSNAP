@@ -30,7 +30,7 @@ when frame-exact boundaries matter more than perfect fidelity.
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.12+.
 
 ```bash
-uv sync --group dev --group setup     # create the venv and install tooling
+uv sync --group dev                   # create the venv and install tooling
 uv run python scripts/fetch_ffmpeg.py # download the pinned, checksum-verified FFmpeg into bin/
 uv run ruff check .                   # lint
 uv run ty check                       # type check

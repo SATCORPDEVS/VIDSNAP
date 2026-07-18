@@ -28,6 +28,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -97,37 +100,67 @@ def _verify(path: Path, expected: str) -> None:
     print(f"Checksum OK: {actual}")
 
 
-def _extract_wanted(archive: Path, out_dir: Path) -> list[Path]:
-    try:
-        import py7zr
-    except ImportError:
-        sys.exit(
-            "This script needs py7zr to unpack the .7z build.\n"
-            "  Install it with:  uv sync --group setup   (or: pip install py7zr)"
-        )
+def _find_bsdtar() -> str:
+    """Locate a libarchive-backed tar that can read .7z archives.
 
+    The gyan build is compressed with the **BCJ2 filter**, which the pure-Python
+    ``py7zr`` cannot decode. libarchive's ``bsdtar`` can, and modern Windows
+    (10 1803+/11) ships it as ``System32\\tar.exe``. We prefer that explicit
+    path because a bare ``tar`` on ``PATH`` may resolve to GNU tar (which cannot
+    read 7z at all).
+    """
+    if os.name == "nt":
+        system_root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+        candidate = Path(system_root) / "System32" / "tar.exe"
+        if candidate.is_file():
+            return str(candidate)
+    found = shutil.which("bsdtar") or shutil.which("tar")
+    if found:
+        return found
+    sys.exit(
+        "Could not find a tar capable of reading .7z archives.\n"
+        "On Windows this is System32\\tar.exe (bsdtar); elsewhere install "
+        "libarchive's bsdtar."
+    )
+
+
+def _extract_wanted(archive: Path, out_dir: Path) -> list[Path]:
+    """Extract the wanted binaries from the .7z into ``out_dir`` via bsdtar.
+
+    Extraction goes to a staging dir (bsdtar preserves the archive's versioned
+    ``ffmpeg-<ver>-full_build/bin/`` layout); only the wanted binaries are then
+    copied out, flattened into ``out_dir``. tar is always invoked with an
+    argument list — never a shell string.
+    """
+    tar = _find_bsdtar()
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    with py7zr.SevenZipFile(archive, mode="r") as zf:
-        # Map each wanted basename to its full path inside the archive.
-        names = zf.getnames()
-        targets = {
-            wanted: name
-            for wanted in WANTED
-            for name in names
-            if name.replace("\\", "/").endswith("/" + wanted) or name == wanted
-        }
-        missing = [w for w in WANTED if w not in targets]
-        if missing:
-            sys.exit(f"Archive did not contain expected binaries: {', '.join(missing)}")
 
-        extracted = zf.read(targets.values())  # {archive_name: BytesIO}
-        for wanted, archive_name in targets.items():
-            data = extracted[archive_name].read()
+    with tempfile.TemporaryDirectory(
+        prefix="vidsnap-extract-", ignore_cleanup_errors=True
+    ) as staging:
+        staging_dir = Path(staging)
+        result = subprocess.run(
+            [tar, "-xf", str(archive), "-C", str(staging_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            sys.exit(f"tar failed to extract the archive:\n{result.stderr.strip()}")
+
+        for wanted in WANTED:
+            matches = list(staging_dir.rglob(wanted))
+            if not matches:
+                sys.exit(f"Archive did not contain expected binary: {wanted}")
             dest = out_dir / wanted
-            dest.write_bytes(data)
+            shutil.copyfile(matches[0], dest)
             written.append(dest)
-            print(f"  wrote {dest.relative_to(_REPO_ROOT)} ({len(data) // (1024 * 1024)} MiB)")
+            size_mib = dest.stat().st_size // (1024 * 1024)
+            try:
+                shown: Path = dest.relative_to(_REPO_ROOT)
+            except ValueError:  # out_dir given outside the repo
+                shown = dest
+            print(f"  wrote {shown} ({size_mib} MiB)")
     return written
 
 
@@ -157,7 +190,7 @@ def fetch(out_dir: Path = _BIN_DIR, *, force: bool = False) -> None:
         print(f"Binaries already present in {out_dir} — use --force to re-download.")
         return
 
-    with tempfile.TemporaryDirectory(prefix="vidsnap-ffmpeg-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="vidsnap-ffmpeg-", ignore_cleanup_errors=True) as tmp:
         archive = Path(tmp) / "ffmpeg.7z"
         _download(ARCHIVE_URL, archive)
         _verify(archive, ARCHIVE_SHA256)
